@@ -16,8 +16,9 @@ catkin_make
   
 * __Download on the robot :__  
 git clone https://github.com/clbess/robot_control  
+(Only for Turtlebot Waffle with a Widowx arm :  
 git clone https://github.com/clbess/widowx_arm  
-git clone https://github.com/vanadiumlabs/arbotix_ros  
+git clone https://github.com/vanadiumlabs/arbotix_ros)  
 cd ~/catkin_ws  
 catkin_make  
   
