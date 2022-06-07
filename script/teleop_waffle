@@ -257,7 +257,7 @@ if __name__=="__main__":
                     cv2.waitKey(1)
                     if key == ' ':
                         cv2.destroyAllWindows()
-                        print("\n" + "Camera access closed")
+                        print("\n" + "Camera access closed" + "\n")
                         done = 0
                         break
 
