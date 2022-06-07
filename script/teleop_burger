@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+
+import time
+import rospy
+from cv_bridge import CvBridge, CvBridgeError
+import cv2
+import numpy as np
+import actionlib
+from control_msgs.msg import *
+from std_msgs.msg import *
+from sensor_msgs.msg import Image
+from geometry_msgs.msg import Twist
+from turtlebot3_msgs.msg import SensorState
+import sys, select, os
+if os.name == 'nt':
+  import msvcrt
+else:
+  import tty, termios
+
+menu = """------------MENU-------------
+m : Move the Robot
+i : Display camera image and rotate the camera
+q : Quit
+-----------------------------"""
+
+control_camera = """-------CAMERA CONTROL--------
+e : Rotates to the left
+r : Rotates to the right
+0 : Set position to 0
+space : Return to menu
+-----------------------------
+"""
+
+control_robot = """-------ROBOT CONTROL---------
+w : Forward
+x : Backward
+a : Left
+d : Right
+0 : Stop robot
+space : Return to menu
+-----------------------------
+"""
+
+#PARAMETERS
+BURGER_MAX_LIN_VEL = 0.22
+BURGER_MAX_ANG_VEL = 2.84
+
+LIN_VEL_STEP_SIZE = 0.01
+ANG_VEL_STEP_SIZE = 0.1
+
+SERVO_MIN = 0
+SERVO_MAX = 100
+pas = 5
+
+last_measure = 822
+stop = 0
+
+img = None
+
+#TO GET CAMERA IMAGE
+def getImage(msg):
+    global img
+    bridge = CvBridge()
+    img = bridge.imgmsg_to_cv2(msg, "bgr8")
+
+def stackImages(scale,imgArray):
+    rows = len(imgArray)
+    cols = len(imgArray[0])
+    rowsAvailable = isinstance(imgArray[0], list)
+    width = imgArray[0][0].shape[1]
+    height = imgArray[0][0].shape[0]
+    if rowsAvailable:
+        for x in range ( 0, rows):
+            for y in range(0, cols):
+                if imgArray[x][y].shape[:2] == imgArray[0][0].shape [:2]:
+                    imgArray[x][y] = cv2.resize(imgArray[x][y], (0, 0), None, scale, scale)
+                else:
+                    imgArray[x][y] = cv2.resize(imgArray[x][y], (imgArray[0][0].shape[1], imgArray[0][0].shape[0]), None, scale, scale)
+                if len(imgArray[x][y].shape) == 2: imgArray[x][y]= cv2.cvtColor( imgArray[x][y], cv2.COLOR_GRAY2BGR)
+        imageBlank = np.zeros((height, width, 3), np.uint8)
+        hor = [imageBlank]*rows
+        hor_con = [imageBlank]*rows
+        for x in range(0, rows):
+            hor[x] = np.hstack(imgArray[x])
+        ver = np.vstack(hor)
+    else:
+        for x in range(0, rows):
+            if imgArray[x].shape[:2] == imgArray[0].shape[:2]:
+                imgArray[x] = cv2.resize(imgArray[x], (0, 0), None, scale, scale)
+            else:
+                imgArray[x] = cv2.resize(imgArray[x], (imgArray[0].shape[1], imgArray[0].shape[0]), None,scale, scale)
+            if len(imgArray[x].shape) == 2: imgArray[x] = cv2.cvtColor(imgArray[x], cv2.COLOR_GRAY2BGR)
+        hor= np.hstack(imgArray)
+        ver = hor
+    return ver
+
+def getKey():
+    if os.name == 'nt':
+      if sys.version_info[0] >= 3:
+        return msvcrt.getch().decode()
+      else:
+        return msvcrt.getch()
+
+    tty.setraw(sys.stdin.fileno())
+    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+    if rlist:
+        key = sys.stdin.read(1)
+    else:
+        key = ''
+
+    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+    return key
+
+
+#TO VERIFY SPEED AND ANGULAR VALUES
+def makeSimpleProfile(output, input, slop):
+    if input > output:
+        output = min( input, output + slop )
+    elif input < output:
+        output = max( input, output - slop )
+    else:
+        output = input
+
+    return output
+
+def constrain(input, low, high):
+    if input < low:
+      input = low
+    elif input > high:
+      input = high
+    else:
+      input = input
+
+    return input
+
+def checkLinearLimitVelocity(vel):
+    vel = constrain(vel, -BURGER_MAX_LIN_VEL, BURGER_MAX_LIN_VEL)
+    return vel
+
+def checkAngularLimitVelocity(vel):
+    vel = constrain(vel, -BURGER_MAX_ANG_VEL, BURGER_MAX_ANG_VEL)
+    return vel
+
+def getsensor(sensor):
+    global stop
+    global last_measure
+    if ((sensor.cliff < 810) or (sensor.cliff > 830)) and ((last_measure < 800) or (last_measure > 830)):
+        stop = 1
+    elif (sensor.bumper == 1):
+        stop = 2
+    elif (sensor.bumper == 2):
+        stop = 3
+    else:
+        stop = 0
+    last_measure = sensor.cliff
+
+if __name__=="__main__":
+    if os.name != 'nt':
+        settings = termios.tcgetattr(sys.stdin)
+
+    rospy.init_node('teleop_burger_node')
+    #Publishers to set speed and servo values
+    pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+    servo_pub = rospy.Publisher("/servo", UInt16, queue_size=10)
+    #Subscribers to get camera image and sensors values
+    image_sub = rospy.Subscriber("/raspicam_node/image", Image, getImage)
+    sensor_sub = rospy.Subscriber('sensor_state', SensorState, getsensor)
+
+    turtlebot3_model = rospy.get_param("model", "burger")
+
+    servo = UInt16()
+    pos_servo = 0
+
+    i = 0
+    done = 0
+    rate = rospy.Rate(10)
+    target_linear_vel   = 0.0
+    target_angular_vel  = 0.0
+    control_linear_vel  = 0.0
+    control_angular_vel = 0.0
+
+    try:
+        while(1):
+            if done == 0:
+                print(menu)
+                done = 1
+            key = getKey()
+            if key == 'i' : #Display camera image and rotate camera
+                print("\n" + control_camera)
+                while(1):
+                    key = getKey()
+                    cv2.imshow("Camera View", stackImages(3, ([img])))
+                    cv2.waitKey(1)
+                    if key == 'e':
+                        pos_servo = int(constrain(pos_servo + pas, SERVO_MIN, SERVO_MAX))
+                        servo.data = pos_servo
+                        servo_pub.publish(servo)
+                    elif key == 'r':
+                        pos_servo = int(constrain(pos_servo - pas, SERVO_MIN, SERVO_MAX))
+                        servo.data = pos_servo
+                        servo_pub.publish(servo)
+                    elif key == '0':
+                        pos_servo = int(SERVO_MAX/2)
+                        servo.data = pos_servo
+                        servo_pub.publish(servo)
+                    elif key == ' ':
+                        cv2.destroyAllWindows()
+                        done = 0
+                        break
+
+            elif key == 'm' : #Move robot
+                print("\n" + control_robot)
+                target_linear_vel   = 0.0
+                target_angular_vel  = 0.0
+                control_linear_vel  = 0.0
+                control_angular_vel = 0.0
+                while(1):
+                    key = getKey()
+                    mem_stop = stop
+                    if (mem_stop == 1 or mem_stop == 2 or mem_stop == 3): #If sensors detect obstacles
+                        control_linear_vel  = 0.0
+                        control_angular_vel = 0.0
+                        if (mem_stop == 1):
+                            print("Cliff STOP : Maneuver in progress...")
+                        elif (mem_stop == 2 or mem_stop == 3):
+                            print("Bumper STOP : Maneuver in progress...")
+                        while (i <= 2.5):
+                            twist = Twist()
+                            if (mem_stop == 1 or mem_stop == 2):
+                                twist.linear.x = -0.05; twist.linear.y = 0.0; twist.linear.z = 0.0
+                                twist.angular.x = 0.0; twist.angular.y = 0.0; twist.angular.z = 0.67
+                            elif (mem_stop == 3):
+                                twist.linear.x = 0.05; twist.linear.y = 0.0; twist.linear.z = 0.0
+                                twist.angular.x = 0.0; twist.angular.y = 0.0; twist.angular.z = 0.67
+                            pub.publish(twist)
+                            i += 0.1
+                            rate.sleep()
+                        if (mem_stop == 1):
+                            print("Cliff STOP : Maneuver finished" + "\n")
+                        elif (mem_stop == 2 or mem_stop == 3):
+                            print("Bumper STOP : Maneuver finished" + "\n")
+                        target_angular_vel = 0.0
+                        mem_stop = 0
+                        i = 0
+
+                    elif key == 'w' :
+                        target_linear_vel = checkLinearLimitVelocity(target_linear_vel + LIN_VEL_STEP_SIZE)
+                    elif key == 'x' :
+                        target_linear_vel = checkLinearLimitVelocity(target_linear_vel - LIN_VEL_STEP_SIZE)
+                    elif key == 'a' :
+                        target_angular_vel = checkAngularLimitVelocity(target_angular_vel + ANG_VEL_STEP_SIZE)
+                    elif key == 'd' :
+                        target_angular_vel = checkAngularLimitVelocity(target_angular_vel - ANG_VEL_STEP_SIZE)
+                    elif key == '0' :
+                        target_linear_vel   = 0.0
+                        control_linear_vel  = 0.0
+                        target_angular_vel  = 0.0
+                        control_angular_vel = 0.0
+                    elif key == ' ' :
+                        done = 0
+                        break
+                    twist = Twist()
+                    control_linear_vel = makeSimpleProfile(control_linear_vel, target_linear_vel, (LIN_VEL_STEP_SIZE/2.0))
+                    twist.linear.x = control_linear_vel; twist.linear.y = 0.0; twist.linear.z = 0.0
+                    control_angular_vel = makeSimpleProfile(control_angular_vel, target_angular_vel, (ANG_VEL_STEP_SIZE/2.0))
+                    twist.angular.x = 0.0; twist.angular.y = 0.0; twist.angular.z = control_angular_vel
+                    pub.publish(twist)
+
+            elif key == 'q' : #QUIT
+                print("\n" + "Leaving node...")
+                break
+
+            else:
+                if (key == '\x03'):
+                    break
+
+    except Exception as e:
+        print(e)
+
+    if os.name != 'nt':
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
