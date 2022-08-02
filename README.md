@@ -2,7 +2,7 @@
 
 This package can be used on ROS to control turtlebot robots :
 
-- You can control the Turtlebot Burger with 1 bump sensor, 1 servomotor SM-10 for the gripper and 1 servomotor SM-10 attached to rotate the Raspberry Pi camera.
+- You can control the Turtlebot Burger with 1 rear bump sensor, 1 servomotor SM-10 for the gripper and 1 servomotor SM-10 attached to rotate the Raspberry Pi camera. The gripper servo must be attached to the ROBOTIS pin 4 and the camera one must be attached to the ROBOTIS pin 1.
 - You can control the Turtlebot Waffle with a WidowX arm attached on it. You can also control each joint of this arm. And finally, you will be able to detect an object and take it with the arm thanks to OpenCV and the Raspberry Pi camera.
 
 -------------------------------------------------------------------------------------------------------------------------
