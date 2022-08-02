@@ -10,11 +10,13 @@ This package can be used on ROS to control turtlebot robots :
 ## Download :  
   
 * __Download on the PC :__  
+cd ~/catkin_ws/src  
 git clone https://github.com/clbess/robot_control  
 cd ~/catkin_ws  
 catkin_make  
   
 * __Download on the robot :__  
+cd ~/catkin_ws/src
 git clone https://github.com/clbess/robot_control  
 (Only for Turtlebot Waffle with a Widowx arm :  
 git clone https://github.com/clbess/widowx_arm  
