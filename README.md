@@ -31,7 +31,7 @@ roscore
 roslaunch robot_control bringup_burger.launch (or bringup_waffle.launch)  
    
 * __On the PC terminal :__   
-roslaunch robot_control teleop_burger.launch (or teleop_waffle.launch)
+roslaunch robot_control teleop_burger.launch (or teleop_waffle.launch)  
 If you have an error at this step, you have to write : sudo chmod 777 -R robot_control/script
   
 ## If you just want to search for an object with the Turtlebot waffle :   
